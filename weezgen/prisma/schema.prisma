@@ -1,0 +1,124 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id  String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fullname String 
+  clerkId String @unique
+  type String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  domains   Domain[]
+  subscription Billings?
+}
+
+model Domain {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name String
+  icon String
+
+  chatBot  ChatBot?
+  helpdesk  HelpDesk[]
+  filterQuestions FilterQuestions[]
+  customer Customer[]
+
+  User   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String?   @db.Uuid
+}
+
+model ChatBot {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  welcomeMessage String?
+  icon  String?
+  Domain    Domain? @relation(fields: [domainID], references: [id], onDelete: Cascade)
+  domainID String? @unique @db.Uuid
+}
+
+model Billings {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  plan Plans @default(STANDARD)
+  credits Int @default(10)
+  User User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId  String? @unique @db.Uuid
+}
+
+model HelpDesk {
+  id  String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  question String
+  answered String
+  Domain Domain? @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  domainId String @db.Uuid
+}
+
+model FilterQuestions {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  question String
+  answered String
+  Domain Domain? @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  domainId String? @db.Uuid
+}
+
+model CustomerResponses {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  question String
+  answered String
+  customerId String @db.Uuid
+  Customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+}
+
+model Customer {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email String?
+  questions CustomerResponses[]
+  chatRoom ChatRoom[]
+
+  Domain Domain? @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  domainId String? @db.Uuid
+}
+
+model ChatRoom {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  love Boolean @default(false)
+  mailed Boolean @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  customerId String? @db.Uuid
+  Customer Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  message ChatMessage[]
+}
+
+model ChatMessage {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  message String
+  role Role?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  chatRoomId String @db.Uuid
+  ChatRoom ChatRoom? @relation(fields: [chatRoomId], references: [id], onDelete: Cascade)
+}
+
+enum Plans {
+  STANDARD
+  PRO
+  ULTIMATE
+}
+
+enum Role {
+  OWNER
+  CUSTOMER
+}
