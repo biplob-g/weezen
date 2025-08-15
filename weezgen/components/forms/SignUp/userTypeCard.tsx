@@ -66,9 +66,7 @@ function UserTypeCard({
             <div
               className={cn(
                 "w-5 h-5 rounded-full",
-                userType == value
-                  ? "bg-orange"
-                  : "bg-transparent"
+                userType == value ? "bg-orange" : "bg-transparent"
               )}
             >
               <Input

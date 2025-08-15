@@ -1,0 +1,1191 @@
+# Testing Strategy & Tools
+
+## 🧪 **Testing Overview**
+
+### **Testing Pyramid**
+
+```
+┌─────────────────────────────────────┐
+│           E2E Tests                 │  ← User workflows
+├─────────────────────────────────────┤
+│         Integration Tests           │  ← API & Database
+├─────────────────────────────────────┤
+│         Unit Tests                  │  ← Components & Functions
+└─────────────────────────────────────┘
+```
+
+### **Testing Tools Stack**
+
+- **Jest**: Unit and integration testing framework
+- **React Testing Library**: Component testing
+- **Playwright**: End-to-end testing
+- **MSW (Mock Service Worker)**: API mocking
+- **@testing-library/jest-dom**: Custom matchers
+- **Prisma Test Utils**: Database testing utilities
+
+## 🛠 **Testing Setup**
+
+### **Installation**
+
+```bash
+# Install testing dependencies
+npm install --save-dev @testing-library/react @testing-library/jest-dom @testing-library/user-event jest jest-environment-jsdom @types/jest msw playwright @playwright/test
+
+# Install Prisma testing utilities
+npm install --save-dev @prisma/client-test-utils
+```
+
+### **Jest Configuration**
+
+```javascript
+// jest.config.js
+const nextJest = require("next/jest");
+
+const createJestConfig = nextJest({
+  dir: "./",
+});
+
+const customJestConfig = {
+  setupFilesAfterEnv: ["<rootDir>/jest.setup.js"],
+  testEnvironment: "jsdom",
+  moduleNameMapping: {
+    "^@/(.*)$": "<rootDir>/$1",
+  },
+  collectCoverageFrom: [
+    "components/**/*.{ts,tsx}",
+    "hooks/**/*.{ts,tsx}",
+    "actions/**/*.{ts,tsx}",
+    "lib/**/*.{ts,tsx}",
+    "!**/*.d.ts",
+    "!**/node_modules/**",
+  ],
+};
+
+module.exports = createJestConfig(customJestConfig);
+```
+
+### **Jest Setup**
+
+```javascript
+// jest.setup.js
+import "@testing-library/jest-dom";
+
+// Mock Next.js router
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({
+    push: jest.fn(),
+    replace: jest.fn(),
+    prefetch: jest.fn(),
+    back: jest.fn(),
+    forward: jest.fn(),
+    refresh: jest.fn(),
+  }),
+  useSearchParams: () => new URLSearchParams(),
+  usePathname: () => "/",
+}));
+
+// Mock Clerk authentication
+jest.mock("@clerk/nextjs", () => ({
+  useUser: () => ({
+    user: {
+      id: "test-user-id",
+      emailAddresses: [{ emailAddress: "test@example.com" }],
+    },
+    isLoaded: true,
+    isSignedIn: true,
+  }),
+  useAuth: () => ({
+    isLoaded: true,
+    isSignedIn: true,
+    userId: "test-user-id",
+  }),
+  ClerkProvider: ({ children }) => children,
+}));
+```
+
+## 🧩 **Unit Testing**
+
+### **Component Testing**
+
+#### **UserInfoForm Component Test**
+
+```typescript
+// __tests__/components/chatbot/UserInfoForm.test.tsx
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import UserInfoForm from "@/components/chatbot/UserInfoForm";
+
+describe("UserInfoForm", () => {
+  const mockOnSubmit = jest.fn();
+
+  beforeEach(() => {
+    mockOnSubmit.mockClear();
+  });
+
+  it("renders form fields correctly", () => {
+    render(<UserInfoForm onSubmit={mockOnSubmit} />);
+
+    expect(screen.getByLabelText(/full name/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/email address/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/phone number/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /start chat/i })
+    ).toBeInTheDocument();
+  });
+
+  it("validates required fields", async () => {
+    const user = userEvent.setup();
+    render(<UserInfoForm onSubmit={mockOnSubmit} />);
+
+    const submitButton = screen.getByRole("button", { name: /start chat/i });
+    await user.click(submitButton);
+
+    await waitFor(() => {
+      expect(screen.getByText(/name is required/i)).toBeInTheDocument();
+      expect(screen.getByText(/email is required/i)).toBeInTheDocument();
+    });
+
+    expect(mockOnSubmit).not.toHaveBeenCalled();
+  });
+
+  it("submits form with valid data", async () => {
+    const user = userEvent.setup();
+    render(<UserInfoForm onSubmit={mockOnSubmit} />);
+
+    await user.type(screen.getByLabelText(/full name/i), "John Doe");
+    await user.type(
+      screen.getByLabelText(/email address/i),
+      "john@example.com"
+    );
+    await user.type(screen.getByLabelText(/phone number/i), "1234567890");
+
+    const submitButton = screen.getByRole("button", { name: /start chat/i });
+    await user.click(submitButton);
+
+    await waitFor(() => {
+      expect(mockOnSubmit).toHaveBeenCalledWith({
+        name: "John Doe",
+        email: "john@example.com",
+        phone: "1234567890",
+        countryCode: "+1",
+      });
+    });
+  });
+
+  it("auto-detects country code", async () => {
+    // Mock IP detection
+    global.fetch = jest.fn(() =>
+      Promise.resolve({
+        json: () => Promise.resolve({ country_code: "GB" }),
+      })
+    ) as jest.Mock;
+
+    render(<UserInfoForm onSubmit={mockOnSubmit} defaultCountryCode="+44" />);
+
+    expect(screen.getByText("🇬🇧 +44")).toBeInTheDocument();
+  });
+});
+```
+
+#### **ChatHistory Component Test**
+
+```typescript
+// __tests__/components/chatbot/ChatHistory.test.tsx
+import { render, screen, fireEvent } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import ChatHistory from "@/components/chatbot/ChatHistory";
+
+describe("ChatHistory", () => {
+  const mockMessages = [
+    {
+      id: "1",
+      message: "Hello, how can I help you?",
+      role: "OWNER" as const,
+      createdAt: new Date("2024-01-01T10:00:00Z"),
+    },
+    {
+      id: "2",
+      message: "I need help with my order",
+      role: "CUSTOMER" as const,
+      createdAt: new Date("2024-01-01T10:01:00Z"),
+    },
+  ];
+
+  const mockOnContinueChat = jest.fn();
+  const mockOnStartNew = jest.fn();
+
+  beforeEach(() => {
+    mockOnContinueChat.mockClear();
+    mockOnStartNew.mockClear();
+  });
+
+  it("renders chat history correctly", () => {
+    render(
+      <ChatHistory
+        messages={mockMessages}
+        onContinueChat={mockOnContinueChat}
+        onStartNew={mockOnStartNew}
+      />
+    );
+
+    expect(screen.getByText(/previous conversation/i)).toBeInTheDocument();
+    expect(screen.getByText(/hello, how can i help you/i)).toBeInTheDocument();
+    expect(screen.getByText(/i need help with my order/i)).toBeInTheDocument();
+  });
+
+  it("shows only last 5 messages", () => {
+    const manyMessages = Array.from({ length: 10 }, (_, i) => ({
+      id: String(i),
+      message: `Message ${i}`,
+      role: "CUSTOMER" as const,
+      createdAt: new Date(),
+    }));
+
+    render(
+      <ChatHistory
+        messages={manyMessages}
+        onContinueChat={mockOnContinueChat}
+        onStartNew={mockOnStartNew}
+      />
+    );
+
+    // Should only show last 5 messages
+    expect(screen.getByText("Message 5")).toBeInTheDocument();
+    expect(screen.getByText("Message 9")).toBeInTheDocument();
+    expect(screen.queryByText("Message 0")).not.toBeInTheDocument();
+  });
+
+  it("handles continue chat action", async () => {
+    const user = userEvent.setup();
+    render(
+      <ChatHistory
+        messages={mockMessages}
+        onContinueChat={mockOnContinueChat}
+        onStartNew={mockOnStartNew}
+      />
+    );
+
+    const continueButton = screen.getByRole("button", {
+      name: /continue chat/i,
+    });
+    await user.click(continueButton);
+
+    expect(mockOnContinueChat).toHaveBeenCalled();
+  });
+
+  it("handles start new chat action", async () => {
+    const user = userEvent.setup();
+    render(
+      <ChatHistory
+        messages={mockMessages}
+        onContinueChat={mockOnContinueChat}
+        onStartNew={mockOnStartNew}
+      />
+    );
+
+    const startNewButton = screen.getByRole("button", { name: /start new/i });
+    await user.click(startNewButton);
+
+    expect(mockOnStartNew).toHaveBeenCalled();
+  });
+});
+```
+
+### **Hook Testing**
+
+#### **useChatBot Hook Test**
+
+```typescript
+// __tests__/hooks/chatbot/useChatBot.test.ts
+import { renderHook, act, waitFor } from "@testing-library/react";
+import { useChatBot } from "@/hooks/chatbot/useChatBot";
+import * as conversationActions from "@/actions/conversation";
+import * as botActions from "@/actions/bot";
+
+// Mock server actions
+jest.mock("@/actions/conversation");
+jest.mock("@/actions/bot");
+
+describe("useChatBot", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("initializes with correct default state", () => {
+    const { result } = renderHook(() => useChatBot());
+
+    expect(result.current.showUserInfoForm).toBe(true);
+    expect(result.current.showChatHistory).toBe(false);
+    expect(result.current.isCheckingIP).toBe(false);
+    expect(result.current.currentCustomer).toBe(null);
+    expect(result.current.onChats).toEqual([]);
+  });
+
+  it("handles user info form submission", async () => {
+    const mockCustomer = {
+      id: "customer-1",
+      name: "John Doe",
+      email: "john@example.com",
+      phone: "1234567890",
+      countryCode: "+1",
+      chatRoom: [{ id: "chat-1" }],
+    };
+
+    (
+      conversationActions.onCreateCustomerWithInfo as jest.Mock
+    ).mockResolvedValue({
+      success: true,
+      customer: mockCustomer,
+    });
+
+    const { result } = renderHook(() => useChatBot());
+
+    const userInfo = {
+      name: "John Doe",
+      email: "john@example.com",
+      phone: "1234567890",
+      countryCode: "+1",
+    };
+
+    await act(async () => {
+      await result.current.handleUserInfoSubmit(userInfo);
+    });
+
+    await waitFor(() => {
+      expect(result.current.currentCustomer).toEqual(mockCustomer);
+      expect(result.current.showUserInfoForm).toBe(false);
+      expect(result.current.onChats).toHaveLength(1);
+      expect(result.current.onChats[0].role).toBe("assistant");
+      expect(result.current.onChats[0].content).toContain("Hello John");
+    });
+  });
+
+  it("detects returning users by IP", async () => {
+    const mockReturningCustomer = {
+      id: "customer-1",
+      name: "John Doe",
+      email: "john@example.com",
+      chatRoom: [
+        {
+          id: "chat-1",
+          message: [
+            {
+              id: "msg-1",
+              message: "Previous message",
+              role: "CUSTOMER",
+              createdAt: new Date(),
+            },
+          ],
+        },
+      ],
+    };
+
+    (conversationActions.onFindCustomerByIP as jest.Mock).mockResolvedValue(
+      mockReturningCustomer
+    );
+
+    const { result } = renderHook(() => useChatBot());
+
+    await act(async () => {
+      await result.current.onGetDomainChatBot("domain-1");
+    });
+
+    await waitFor(() => {
+      expect(result.current.showUserInfoForm).toBe(false);
+      expect(result.current.showChatHistory).toBe(true);
+      expect(result.current.currentCustomer).toEqual(mockReturningCustomer);
+    });
+  });
+
+  it("handles chat message sending", async () => {
+    const mockAiResponse = {
+      response: {
+        role: "assistant",
+        content: "AI response message",
+      },
+    };
+
+    (botActions.onAiChatBotAssistant as jest.Mock).mockResolvedValue(
+      mockAiResponse
+    );
+
+    const { result } = renderHook(() => useChatBot());
+
+    // Set up initial state
+    act(() => {
+      result.current.currentBotId = "bot-1";
+      result.current.currentCustomer = {
+        id: "customer-1",
+        chatRoom: [{ id: "chat-1" }],
+      } as any;
+    });
+
+    const message = "Hello, I need help";
+
+    await act(async () => {
+      await result.current.onstartChatting({ content: message });
+    });
+
+    await waitFor(() => {
+      expect(result.current.onChats).toHaveLength(2);
+      expect(result.current.onChats[0].content).toBe(message);
+      expect(result.current.onChats[1].content).toBe("AI response message");
+    });
+  });
+});
+```
+
+### **Utility Function Testing**
+
+#### **IP Utils Test**
+
+```typescript
+// __tests__/lib/ipUtils.test.ts
+import {
+  isValidIPAddress,
+  normalizeIPAddress,
+  isWithinRetentionPeriod,
+  getClientIP,
+} from "@/lib/ipUtils";
+
+describe("IP Utils", () => {
+  describe("isValidIPAddress", () => {
+    it("validates IPv4 addresses correctly", () => {
+      expect(isValidIPAddress("192.168.1.1")).toBe(true);
+      expect(isValidIPAddress("10.0.0.1")).toBe(true);
+      expect(isValidIPAddress("172.16.0.1")).toBe(true);
+      expect(isValidIPAddress("256.1.2.3")).toBe(false);
+      expect(isValidIPAddress("192.168.1")).toBe(false);
+      expect(isValidIPAddress("invalid")).toBe(false);
+    });
+
+    it("validates IPv6 addresses correctly", () => {
+      expect(isValidIPAddress("2001:db8::1")).toBe(true);
+      expect(isValidIPAddress("::1")).toBe(true);
+      expect(isValidIPAddress("2001:db8::1:2:3:4")).toBe(true);
+      expect(isValidIPAddress("2001:db8::1:2:3:4:5:6:7:8")).toBe(false);
+    });
+  });
+
+  describe("normalizeIPAddress", () => {
+    it("normalizes IP addresses correctly", () => {
+      expect(normalizeIPAddress("192.168.001.001")).toBe("192.168.1.1");
+      expect(
+        normalizeIPAddress("2001:0db8:0000:0000:0000:0000:0000:0001")
+      ).toBe("2001:db8::1");
+    });
+  });
+
+  describe("isWithinRetentionPeriod", () => {
+    it("returns true for recent dates", () => {
+      const recentDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000); // 7 days ago
+      expect(isWithinRetentionPeriod(recentDate)).toBe(true);
+    });
+
+    it("returns false for old dates", () => {
+      const oldDate = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000); // 20 days ago
+      expect(isWithinRetentionPeriod(oldDate)).toBe(false);
+    });
+  });
+
+  describe("getClientIP", () => {
+    it("extracts IP from headers correctly", () => {
+      const headers = new Headers({
+        "x-forwarded-for": "192.168.1.1, 10.0.0.1",
+        "x-real-ip": "192.168.1.2",
+      });
+
+      expect(getClientIP(headers)).toBe("192.168.1.1");
+    });
+
+    it("falls back to x-real-ip when x-forwarded-for is not available", () => {
+      const headers = new Headers({
+        "x-real-ip": "192.168.1.2",
+      });
+
+      expect(getClientIP(headers)).toBe("192.168.1.2");
+    });
+
+    it("returns null when no IP headers are found", () => {
+      const headers = new Headers();
+      expect(getClientIP(headers)).toBe(null);
+    });
+  });
+});
+```
+
+## 🔗 **Integration Testing**
+
+### **Server Actions Testing**
+
+#### **Conversation Actions Test**
+
+```typescript
+// __tests__/actions/conversation.test.ts
+import { client } from "@/lib/prisma";
+import {
+  onCreateCustomerWithInfo,
+  onFindCustomerByIP,
+  onDeleteConversation,
+} from "@/actions/conversation";
+
+// Mock Prisma client
+jest.mock("@/lib/prisma", () => ({
+  client: {
+    customer: {
+      create: jest.fn(),
+      findFirst: jest.fn(),
+    },
+    chatRoom: {
+      delete: jest.fn(),
+      findUnique: jest.fn(),
+    },
+  },
+}));
+
+describe("Conversation Actions", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  describe("onCreateCustomerWithInfo", () => {
+    it("creates customer with chat room successfully", async () => {
+      const mockCustomer = {
+        id: "customer-1",
+        name: "John Doe",
+        email: "john@example.com",
+        chatRoom: [{ id: "chat-1" }],
+      };
+
+      (client.customer.create as jest.Mock).mockResolvedValue(mockCustomer);
+
+      const userInfo = {
+        name: "John Doe",
+        email: "john@example.com",
+        phone: "1234567890",
+        countryCode: "+1",
+      };
+
+      const result = await onCreateCustomerWithInfo("domain-1", userInfo);
+
+      expect(result.success).toBe(true);
+      expect(result.customer).toEqual(mockCustomer);
+      expect(client.customer.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          name: "John Doe",
+          email: "john@example.com",
+          phone: "1234567890",
+          countryCode: "+1",
+          domainId: "domain-1",
+          chatRoom: {
+            create: {
+              domainId: "domain-1",
+            },
+          },
+        }),
+        include: {
+          chatRoom: true,
+        },
+      });
+    });
+
+    it("handles creation errors gracefully", async () => {
+      (client.customer.create as jest.Mock).mockRejectedValue(
+        new Error("Database error")
+      );
+
+      const userInfo = {
+        name: "John Doe",
+        email: "john@example.com",
+        phone: "1234567890",
+        countryCode: "+1",
+      };
+
+      const result = await onCreateCustomerWithInfo("domain-1", userInfo);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe("Failed to create customer");
+    });
+  });
+
+  describe("onFindCustomerByIP", () => {
+    it("finds customer by IP within retention period", async () => {
+      const mockCustomer = {
+        id: "customer-1",
+        name: "John Doe",
+        ipAddress: "192.168.1.1",
+        createdAt: new Date(),
+        chatRoom: [{ id: "chat-1" }],
+      };
+
+      (client.customer.findFirst as jest.Mock).mockResolvedValue(mockCustomer);
+
+      const result = await onFindCustomerByIP("domain-1");
+
+      expect(result).toEqual(mockCustomer);
+      expect(client.customer.findFirst).toHaveBeenCalledWith({
+        where: {
+          domainId: "domain-1",
+          ipAddress: expect.any(String),
+          createdAt: {
+            gte: expect.any(Date),
+          },
+        },
+        include: {
+          chatRoom: {
+            include: {
+              message: {
+                orderBy: { createdAt: "asc" },
+              },
+            },
+          },
+        },
+      });
+    });
+
+    it("returns null when no customer found", async () => {
+      (client.customer.findFirst as jest.Mock).mockResolvedValue(null);
+
+      const result = await onFindCustomerByIP("domain-1");
+
+      expect(result).toBe(null);
+    });
+  });
+
+  describe("onDeleteConversation", () => {
+    it("deletes conversation successfully", async () => {
+      const mockChatRoom = { id: "chat-1" };
+      (client.chatRoom.findUnique as jest.Mock).mockResolvedValue(mockChatRoom);
+      (client.chatRoom.delete as jest.Mock).mockResolvedValue(mockChatRoom);
+
+      const result = await onDeleteConversation("chat-1");
+
+      expect(result.success).toBe(true);
+      expect(client.chatRoom.delete).toHaveBeenCalledWith({
+        where: { id: "chat-1" },
+      });
+    });
+
+    it("handles non-existent conversation", async () => {
+      (client.chatRoom.findUnique as jest.Mock).mockResolvedValue(null);
+
+      const result = await onDeleteConversation("non-existent");
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe("Chat room not found");
+    });
+  });
+});
+```
+
+## 🎭 **End-to-End Testing**
+
+### **Playwright Setup**
+
+#### **Playwright Configuration**
+
+```typescript
+// playwright.config.ts
+import { defineConfig, devices } from "@playwright/test";
+
+export default defineConfig({
+  testDir: "./e2e",
+  fullyParallel: true,
+  forbidOnly: !!process.env.CI,
+  retries: process.env.CI ? 2 : 0,
+  workers: process.env.CI ? 1 : undefined,
+  reporter: "html",
+  use: {
+    baseURL: "http://localhost:3000",
+    trace: "on-first-retry",
+    screenshot: "only-on-failure",
+  },
+  projects: [
+    {
+      name: "chromium",
+      use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      name: "firefox",
+      use: { ...devices["Desktop Firefox"] },
+    },
+    {
+      name: "webkit",
+      use: { ...devices["Desktop Safari"] },
+    },
+    {
+      name: "Mobile Chrome",
+      use: { ...devices["Pixel 5"] },
+    },
+    {
+      name: "Mobile Safari",
+      use: { ...devices["iPhone 12"] },
+    },
+  ],
+  webServer: {
+    command: "npm run dev",
+    url: "http://localhost:3000",
+    reuseExistingServer: !process.env.CI,
+  },
+});
+```
+
+#### **E2E Test Examples**
+
+##### **User Information Form Flow**
+
+```typescript
+// e2e/user-info-form.spec.ts
+import { test, expect } from "@playwright/test";
+
+test.describe("User Information Form", () => {
+  test("new user sees form and can submit information", async ({ page }) => {
+    // Navigate to chatbot page
+    await page.goto("/chatbot");
+
+    // Wait for chatbot to load
+    await page.waitForSelector('[data-testid="chatbot-window"]');
+
+    // Check that user info form is visible
+    await expect(page.locator('[data-testid="user-info-form"]')).toBeVisible();
+
+    // Fill out the form
+    await page.fill('[data-testid="name-input"]', "John Doe");
+    await page.fill('[data-testid="email-input"]', "john@example.com");
+    await page.fill('[data-testid="phone-input"]', "1234567890");
+
+    // Submit the form
+    await page.click('[data-testid="submit-button"]');
+
+    // Verify form is hidden and chat interface is shown
+    await expect(
+      page.locator('[data-testid="user-info-form"]')
+    ).not.toBeVisible();
+    await expect(page.locator('[data-testid="chat-interface"]')).toBeVisible();
+
+    // Verify welcome message appears
+    await expect(page.locator('[data-testid="chat-message"]')).toContainText(
+      "Hello John"
+    );
+  });
+
+  test("returning user sees chat history", async ({ page }) => {
+    // Mock IP detection to return existing customer
+    await page.route("**/api/ip-detection", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          customer: {
+            id: "existing-customer",
+            name: "John Doe",
+            chatRoom: [
+              {
+                id: "chat-1",
+                message: [
+                  {
+                    id: "msg-1",
+                    message: "Previous conversation",
+                    role: "CUSTOMER",
+                    createdAt: new Date().toISOString(),
+                  },
+                ],
+              },
+            ],
+          },
+        }),
+      });
+    });
+
+    await page.goto("/chatbot");
+
+    // Check that chat history is shown instead of form
+    await expect(page.locator('[data-testid="chat-history"]')).toBeVisible();
+    await expect(
+      page.locator('[data-testid="user-info-form"]')
+    ).not.toBeVisible();
+
+    // Verify previous messages are displayed
+    await expect(page.locator('[data-testid="chat-history"]')).toContainText(
+      "Previous conversation"
+    );
+  });
+});
+```
+
+##### **Admin Conversation Management**
+
+```typescript
+// e2e/admin-conversations.spec.ts
+import { test, expect } from "@playwright/test";
+
+test.describe("Admin Conversation Management", () => {
+  test.beforeEach(async ({ page }) => {
+    // Mock authentication
+    await page.addInitScript(() => {
+      window.localStorage.setItem(
+        "clerk-db",
+        JSON.stringify({
+          user: {
+            id: "admin-user",
+            emailAddresses: [{ emailAddress: "admin@example.com" }],
+          },
+        })
+      );
+    });
+  });
+
+  test("admin can view and filter conversations", async ({ page }) => {
+    await page.goto("/conversation");
+
+    // Wait for conversations to load
+    await page.waitForSelector('[data-testid="conversation-list"]');
+
+    // Check that conversations are displayed
+    await expect(page.locator('[data-testid="conversation-card"]')).toHaveCount(
+      3
+    );
+
+    // Test filtering
+    await page.click('[data-testid="unread-tab"]');
+    await expect(page.locator('[data-testid="conversation-card"]')).toHaveCount(
+      1
+    );
+
+    await page.click('[data-testid="all-tab"]');
+    await expect(page.locator('[data-testid="conversation-card"]')).toHaveCount(
+      3
+    );
+
+    await page.click('[data-testid="expired-tab"]');
+    await expect(page.locator('[data-testid="conversation-card"]')).toHaveCount(
+      1
+    );
+  });
+
+  test("admin can delete conversations", async ({ page }) => {
+    await page.goto("/conversation");
+
+    // Click delete button on first conversation
+    await page.click('[data-testid="delete-conversation-button"]').first();
+
+    // Confirm deletion
+    await page.click('[data-testid="confirm-delete-button"]');
+
+    // Verify conversation is removed
+    await expect(page.locator('[data-testid="conversation-card"]')).toHaveCount(
+      2
+    );
+  });
+
+  test("admin can view conversation details", async ({ page }) => {
+    await page.goto("/conversation");
+
+    // Click on first conversation
+    await page.click('[data-testid="conversation-card"]').first();
+
+    // Verify chat window loads
+    await expect(page.locator('[data-testid="chat-window"]')).toBeVisible();
+
+    // Verify customer information is displayed
+    await expect(page.locator('[data-testid="customer-info"]')).toContainText(
+      "John Doe"
+    );
+    await expect(page.locator('[data-testid="customer-info"]')).toContainText(
+      "john@example.com"
+    );
+  });
+});
+```
+
+## 🧹 **Database Testing**
+
+### **Test Database Setup**
+
+```typescript
+// __tests__/utils/test-db.ts
+import { PrismaClient } from "@prisma/client";
+import { execSync } from "child_process";
+import { join } from "path";
+
+const prismaBinary = join(
+  __dirname,
+  "..",
+  "..",
+  "node_modules",
+  ".bin",
+  "prisma"
+);
+
+export class TestDatabase {
+  private prisma: PrismaClient;
+
+  constructor() {
+    this.prisma = new PrismaClient({
+      datasources: {
+        db: {
+          url:
+            process.env.TEST_DATABASE_URL ||
+            "postgresql://test:test@localhost:5432/weezgen_test",
+        },
+      },
+    });
+  }
+
+  async setup() {
+    // Reset database
+    execSync(`${prismaBinary} migrate reset --force`, {
+      env: { ...process.env, DATABASE_URL: process.env.TEST_DATABASE_URL },
+    });
+
+    // Generate Prisma client
+    execSync(`${prismaBinary} generate`, {
+      env: { ...process.env, DATABASE_URL: process.env.TEST_DATABASE_URL },
+    });
+  }
+
+  async cleanup() {
+    await this.prisma.$disconnect();
+  }
+
+  async seedTestData() {
+    // Create test domain
+    const domain = await this.prisma.domain.create({
+      data: {
+        name: "Test Domain",
+        userId: "test-user-id",
+      },
+    });
+
+    // Create test customer
+    const customer = await this.prisma.customer.create({
+      data: {
+        name: "Test Customer",
+        email: "test@example.com",
+        phone: "1234567890",
+        countryCode: "+1",
+        ipAddress: "192.168.1.1",
+        domainId: domain.id,
+      },
+    });
+
+    // Create test chat room
+    const chatRoom = await this.prisma.chatRoom.create({
+      data: {
+        customerId: customer.id,
+        domainId: domain.id,
+      },
+    });
+
+    return { domain, customer, chatRoom };
+  }
+}
+```
+
+### **Database Integration Tests**
+
+```typescript
+// __tests__/integration/database.test.ts
+import { TestDatabase } from "../utils/test-db";
+import {
+  onCreateCustomerWithInfo,
+  onFindCustomerByIP,
+} from "@/actions/conversation";
+
+describe("Database Integration Tests", () => {
+  let testDb: TestDatabase;
+
+  beforeAll(async () => {
+    testDb = new TestDatabase();
+    await testDb.setup();
+  });
+
+  afterAll(async () => {
+    await testDb.cleanup();
+  });
+
+  beforeEach(async () => {
+    await testDb.seedTestData();
+  });
+
+  it("creates customer with chat room in database", async () => {
+    const userInfo = {
+      name: "New Customer",
+      email: "new@example.com",
+      phone: "9876543210",
+      countryCode: "+1",
+    };
+
+    const result = await onCreateCustomerWithInfo("test-domain-id", userInfo);
+
+    expect(result.success).toBe(true);
+    expect(result.customer).toBeDefined();
+    expect(result.customer?.name).toBe("New Customer");
+    expect(result.customer?.chatRoom).toHaveLength(1);
+  });
+
+  it("finds customer by IP address", async () => {
+    const customer = await onFindCustomerByIP("test-domain-id");
+
+    expect(customer).toBeDefined();
+    expect(customer?.ipAddress).toBe("192.168.1.1");
+    expect(customer?.chatRoom).toHaveLength(1);
+  });
+});
+```
+
+## 🚀 **Testing Scripts**
+
+### **Package.json Scripts**
+
+```json
+{
+  "scripts": {
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:headed": "playwright test --headed",
+    "test:db": "jest --testPathPattern=database",
+    "test:integration": "jest --testPathPattern=integration",
+    "test:unit": "jest --testPathPattern=unit"
+  }
+}
+```
+
+### **GitHub Actions Workflow**
+
+```yaml
+# .github/workflows/test.yml
+name: Tests
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: weezgen_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: "18"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup test database
+        run: |
+          npx prisma migrate deploy
+          npx prisma generate
+        env:
+          DATABASE_URL: postgresql://postgres:test@localhost:5432/weezgen_test
+
+      - name: Run unit tests
+        run: npm run test:unit
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:test@localhost:5432/weezgen_test
+
+      - name: Run integration tests
+        run: npm run test:integration
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:test@localhost:5432/weezgen_test
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps
+
+      - name: Run E2E tests
+        run: npm run test:e2e
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:test@localhost:5432/weezgen_test
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 30
+```
+
+## 📊 **Test Coverage Goals**
+
+### **Coverage Targets**
+
+- **Unit Tests**: 80%+ coverage
+- **Integration Tests**: 70%+ coverage
+- **E2E Tests**: Critical user flows
+- **Database Tests**: All CRUD operations
+
+### **Coverage Report**
+
+```bash
+# Generate coverage report
+npm run test:coverage
+
+# View coverage in browser
+open coverage/lcov-report/index.html
+```
+
+## 🔧 **Testing Best Practices**
+
+### **1. Test Organization**
+
+- **Unit tests**: Test individual functions and components
+- **Integration tests**: Test API endpoints and database operations
+- **E2E tests**: Test complete user workflows
+- **Database tests**: Test data persistence and relationships
+
+### **2. Test Data Management**
+
+- **Use factories**: Create test data with consistent structure
+- **Clean up**: Always clean up test data after tests
+- **Isolation**: Each test should be independent
+- **Mocking**: Mock external dependencies appropriately
+
+### **3. Test Naming**
+
+- **Descriptive names**: Clearly describe what is being tested
+- **Given-When-Then**: Structure test names to show scenario
+- **Consistent format**: Use consistent naming conventions
+
+### **4. Assertions**
+
+- **Specific assertions**: Test specific behavior, not implementation
+- **User-centric**: Test from user perspective when possible
+- **Error cases**: Test error scenarios and edge cases
+- **Performance**: Test performance-critical operations
+
+### **5. Continuous Testing**
+
+- **Automated runs**: Run tests on every commit
+- **Fast feedback**: Keep tests fast for quick feedback
+- **Reliable**: Ensure tests are flake-free
+- **Maintained**: Keep tests up-to-date with code changes
+  description:
+  globs:
+  alwaysApply: false
+
+---

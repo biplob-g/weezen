@@ -17,6 +17,7 @@ type Props<TFieldValues extends FieldValues = FieldValues> = {
   errors: FieldErrors<TFieldValues>;
   lines?: number;
   form?: string;
+  defaultValue?: string;
 };
 
 const FormGenerator = ({
@@ -28,7 +29,9 @@ const FormGenerator = ({
   type,
   form,
   label,
+  lines,
   options,
+  defaultValue,
 }: Props) => {
   switch (inputType) {
     case "input":
@@ -40,6 +43,7 @@ const FormGenerator = ({
             type={type}
             placeholder={placeholder}
             form={form}
+            defaultValue={defaultValue}
             {...register(name)}
           />
 
@@ -90,6 +94,7 @@ const FormGenerator = ({
             placeholder={placeholder}
             form={form}
             {...register(name)}
+            rows={lines}
           />
 
           <ErrorMessage

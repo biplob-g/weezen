@@ -16,7 +16,7 @@ const ButtonHandler = () => {
   const { isDirty: isEmail } = getFieldState("email", formState);
   const { isDirty: isPassword } = getFieldState("password", formState);
 
-  if (currentStep === 3) {
+  if (currentStep === 2) {
     return (
       <div className="w-full flex flex-col gap-3 items-center">
         <Button type="submit" className="w-full cursor-pointer">
@@ -32,35 +32,21 @@ const ButtonHandler = () => {
     );
   }
 
-  if (currentStep === 2) {
-    return (
-      <div className="w-full flex flex-col gap-3 items-center">
-        <Button
-          type="submit"
-          className="w-full cursor-pointer"
-          {...(isName &&
-            isEmail &&
-            isPassword && {
-              onClick: () =>
-                onGenerateOTP(
-                  getValues("email"),
-                  getValues("password"),
-                  setCurrentStep
-                ),
-            })}
-        >
-          Continue
-        </Button>
-      </div>
-    );
-  }
-
   return (
-    <div className="w-full flex flex-col ap-3 items-center">
+    <div className="w-full flex flex-col gap-3 items-center">
       <Button
         type="submit"
-        className="w-full cursor-pointer bg-primary-gradient"
-        onClick={() => setCurrentStep((prev: number) => prev + 1)}
+        className="w-full cursor-pointer"
+        {...(isName &&
+          isEmail &&
+          isPassword && {
+            onClick: () =>
+              onGenerateOTP(
+                getValues("email"),
+                getValues("password"),
+                setCurrentStep
+              ),
+          })}
       >
         Continue
       </Button>

@@ -1,23 +1,68 @@
-import { currentUser } from "@clerk/nextjs/server";
-import { redirect } from "next/navigation";
-import Link from "next/link";
+import { HeroSection } from "@/components/hero-section";
+import { DashboardPreview } from "@/components/dashboard-preview";
+import { SocialProof } from "@/components/social-proof";
+import { BentoSection } from "@/components/bento-section";
+import { PricingSection } from "@/components/pricing-section";
+import { FAQSection } from "@/components/faq-section";
+import { CTASection } from "@/components/cta-section";
+import { FooterSection } from "@/components/footer-section";
+import { AnimatedSection } from "@/components/animated-section";
+import { Header } from "@/components/header";
 
-export default async function Home() {
-  const user = await currentUser();
-
-  // If user is authenticated, redirect to dashboard
-  if (user) {
-    redirect("/dashboard");
-  }
-
+export default function LandingPage() {
   return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <h1 className="text-5xl text-center">
-        Hi there, this is my first SAAS App
-      </h1>
-      <Link href="/auth/sign-up" className="orange_bg">
-        Click me
-      </Link>
+    <div className="min-h-screen bg-background relative overflow-hidden pb-0">
+      <Header />
+      <div className="relative z-10">
+        <main className="max-w-[1320px] mx-auto relative">
+          <HeroSection />
+          {/* Dashboard Preview Wrapper */}
+          <div className="absolute bottom-[-150px] md:bottom-[-400px] left-1/2 transform -translate-x-1/2 z-30">
+            <AnimatedSection>
+              <DashboardPreview />
+            </AnimatedSection>
+          </div>
+        </main>
+        <AnimatedSection
+          className="relative z-10 max-w-[1320px] mx-auto px-6 mt-[411px] md:mt-[400px]"
+          delay={0.1}
+        >
+          <SocialProof />
+        </AnimatedSection>
+        <AnimatedSection
+          id="features-section"
+          className="relative z-10 max-w-[1320px] mx-auto mt-16 pt-20"
+          delay={0.2}
+        >
+          <BentoSection />
+        </AnimatedSection>
+        <AnimatedSection
+          id="pricing-section"
+          className="relative z-10 max-w-[1320px] mx-auto mt-8 md:mt-16 pt-20"
+          delay={0.2}
+        >
+          <PricingSection />
+        </AnimatedSection>
+        <AnimatedSection
+          id="faq-section"
+          className="relative z-10 max-w-[1320px] mx-auto mt-8 md:mt-16 pt-20"
+          delay={0.2}
+        >
+          <FAQSection />
+        </AnimatedSection>
+        <AnimatedSection
+          className="relative z-10 max-w-[1320px] mx-auto mt-8 md:mt-16"
+          delay={0.2}
+        >
+          <CTASection />
+        </AnimatedSection>
+        <AnimatedSection
+          className="relative z-10 max-w-[1320px] mx-auto mt-8 md:mt-16"
+          delay={0.2}
+        >
+          <FooterSection />
+        </AnimatedSection>
+      </div>
     </div>
   );
 }

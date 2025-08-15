@@ -55,7 +55,7 @@ export const onIntegrateDomain = async (domain: string, icon: string) => {
                 icon,
                 chatBot: {
                   create: {
-                    welcomeMessage: "Het there, have a question? Text us here",
+                    welcomeMessage: "Hey there, have a question? Text us here",
                   },
                 },
               },
@@ -84,23 +84,26 @@ export const onIntegrateDomain = async (domain: string, icon: string) => {
 
 export const onCompleteUserRegistration = async (
   fullname: string,
-  clerkId: string,
-  type: string
+  clerkId: string
 ) => {
   try {
     const registered = await client.user.create({
       data: {
         fullname,
         clerkId,
-        type,
+        role: "admin", // All users are admins
         subscription: {
-          create: {},
+          create: {
+            plan: "STARTER", // Start with trial plan
+            trialStartDate: new Date(),
+            trialEndDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000), // 14 days trial
+          },
         },
       },
       select: {
         fullname: true,
         id: true,
-        type: true,
+        role: true,
       },
     });
     if (registered) {
@@ -152,7 +155,7 @@ export const onLoginUser = async () => {
       select: {
         fullname: true,
         id: true,
-        type: true,
+        role: true,
       },
     });
 

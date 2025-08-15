@@ -1,0 +1,425 @@
+# Database Patterns & Schema
+
+## 🗄️ **Database Schema Overview**
+
+### **Core Models**
+
+#### **Customer Model** (Enhanced with IP Tracking)
+
+```prisma
+model Customer {
+  id          String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String?             // Customer's full name
+  email       String?             // Customer's email address
+  phone       String?             // Customer's phone number (optional)
+  countryCode String?             @default("+1") // Country dial code
+  ipAddress   String?             // IP address for tracking returning users
+  domainId    String?             @db.Uuid
+  chatRoom    ChatRoom[]
+  Domain      Domain?             @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  questions   CustomerResponses[]
+  createdAt   DateTime            @default(now()) // Track when customer was created
+  updatedAt   DateTime            @updatedAt
+}
+```
+
+#### **ChatRoom Model**
+
+```prisma
+model ChatRoom {
+  id         String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  customerId String        @db.Uuid
+  domainId   String        @db.Uuid
+  Customer   Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  Domain     Domain        @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  message    ChatMessage[]
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+}
+```
+
+#### **ChatMessage Model**
+
+```prisma
+model ChatMessage {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  message    String
+  role       Role?    // "OWNER" or "CUSTOMER"
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  chatRoomId String   @db.Uuid
+  seen       Boolean  @default(false) // Default to unread
+  ChatRoom   ChatRoom @relation(fields: [chatRoomId], references: [id], onDelete: Cascade)
+}
+```
+
+## 🔄 **Database Operations**
+
+### **Customer Management**
+
+#### **Creating Customer with Information**
+
+```typescript
+// actions/conversation/index.ts
+export const onCreateCustomerWithInfo = async (
+  domainId: string,
+  userInfo: UserInfoFormProps
+) => {
+  try {
+    const customer = await client.customer.create({
+      data: {
+        name: userInfo.name,
+        email: userInfo.email,
+        phone: userInfo.phone,
+        countryCode: userInfo.countryCode,
+        ipAddress: getClientIP(headers()), // Get IP from request headers
+        domainId: domainId,
+        chatRoom: {
+          create: {
+            domainId: domainId,
+          },
+        },
+      },
+      include: {
+        chatRoom: true,
+      },
+    });
+    return { success: true, customer };
+  } catch (error) {
+    console.error("Error creating customer:", error);
+    return { success: false, error: "Failed to create customer" };
+  }
+};
+```
+
+#### **Finding Customer by IP Address**
+
+```typescript
+// actions/conversation/index.ts
+export const onFindCustomerByIP = async (domainId: string) => {
+  try {
+    const clientIP = getClientIP(headers());
+    if (!clientIP) return null;
+
+    const customer = await client.customer.findFirst({
+      where: {
+        domainId: domainId,
+        ipAddress: clientIP,
+        createdAt: {
+          gte: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000), // 14 days
+        },
+      },
+      include: {
+        chatRoom: {
+          include: {
+            message: {
+              orderBy: { createdAt: "asc" },
+            },
+          },
+        },
+      },
+    });
+    return customer;
+  } catch (error) {
+    console.error("Error finding customer by IP:", error);
+    return null;
+  }
+};
+```
+
+#### **Updating Customer IP Address**
+
+```typescript
+// actions/conversation/index.ts
+export const onUpdateCustomerIP = async (customerId: string) => {
+  try {
+    const clientIP = getClientIP(headers());
+    if (!clientIP) return false;
+
+    await client.customer.update({
+      where: { id: customerId },
+      data: { ipAddress: clientIP },
+    });
+    return true;
+  } catch (error) {
+    console.error("Error updating customer IP:", error);
+    return false;
+  }
+};
+```
+
+### **Chat Message Management**
+
+#### **Storing Conversations**
+
+```typescript
+// actions/bot/index.ts
+export const onStoreConversations = async (
+  chatRoomId: string,
+  message: string,
+  role: "user" | "assistant"
+) => {
+  try {
+    const chatMessage = await client.chatMessage.create({
+      data: {
+        message: message,
+        role: role === "user" ? "CUSTOMER" : "OWNER",
+        chatRoomId: chatRoomId,
+      },
+    });
+    return { success: true, chatMessage };
+  } catch (error) {
+    console.error("Error storing conversation:", error);
+    return { success: false, error: "Failed to store conversation" };
+  }
+};
+```
+
+#### **Getting Chat Messages**
+
+```typescript
+// actions/conversation/index.ts
+export const onGetChatMessages = async (chatRoomId: string) => {
+  try {
+    const messages = await client.chatMessage.findMany({
+      where: { chatRoomId: chatRoomId },
+      orderBy: { createdAt: "asc" },
+    });
+    return messages;
+  } catch (error) {
+    console.error("Error getting chat messages:", error);
+    return null;
+  }
+};
+```
+
+### **Conversation Management**
+
+#### **Getting Domain Chat Rooms**
+
+```typescript
+// actions/conversation/index.ts
+export const onGetDomainChatRooms = async (domainId: string) => {
+  try {
+    const chatRooms = await client.chatRoom.findMany({
+      where: { domainId: domainId },
+      include: {
+        Customer: true,
+        message: {
+          orderBy: { createdAt: "desc" },
+          take: 5, // Get last 5 messages for preview
+        },
+      },
+      orderBy: { updatedAt: "desc" },
+    });
+    return chatRooms;
+  } catch (error) {
+    console.error("Error getting domain chat rooms:", error);
+    return [];
+  }
+};
+```
+
+#### **Deleting Conversations**
+
+```typescript
+// actions/conversation/index.ts
+export const onDeleteConversation = async (chatRoomId: string) => {
+  try {
+    // Check if chat room exists
+    const existingChatRoom = await client.chatRoom.findUnique({
+      where: { id: chatRoomId },
+    });
+
+    if (!existingChatRoom) {
+      return { success: false, error: "Chat room not found" };
+    }
+
+    // Delete chat room (cascades to messages)
+    await client.chatRoom.delete({
+      where: { id: chatRoomId },
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error("Error deleting conversation:", error);
+    return { success: false, error: "Failed to delete conversation" };
+  }
+};
+```
+
+## 🧹 **Data Cleanup & Maintenance**
+
+### **Cleaning Up Old Customers**
+
+```typescript
+// scripts/cleanup-old-customers.ts
+export const onCleanupOldCustomers = async () => {
+  try {
+    const cutoffDate = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+
+    const deletedCustomers = await client.customer.deleteMany({
+      where: {
+        createdAt: {
+          lt: cutoffDate,
+        },
+      },
+    });
+
+    console.log(`Deleted ${deletedCustomers.count} old customers`);
+    return { success: true, count: deletedCustomers.count };
+  } catch (error) {
+    console.error("Error cleaning up old customers:", error);
+    return { success: false, error: "Failed to cleanup old customers" };
+  }
+};
+```
+
+## 🔍 **Query Patterns**
+
+### **IP-Based Customer Detection**
+
+```typescript
+// Find returning customers by IP within retention period
+const returningCustomer = await client.customer.findFirst({
+  where: {
+    domainId: domainId,
+    ipAddress: clientIP,
+    createdAt: {
+      gte: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000), // 14 days
+    },
+  },
+  include: {
+    chatRoom: {
+      include: {
+        message: {
+          orderBy: { createdAt: "asc" },
+        },
+      },
+    },
+  },
+});
+```
+
+### **Conversation Filtering**
+
+```typescript
+// Filter conversations by different criteria
+const filterConversations = (chatRooms: any[], filter: string) => {
+  const now = new Date();
+  const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+  switch (filter) {
+    case "unread":
+      return chatRooms.filter((room) =>
+        room.message.some((msg: any) => !msg.seen && msg.role === "CUSTOMER")
+      );
+    case "expired":
+      return chatRooms.filter((room) => room.updatedAt < oneDayAgo);
+    default: // "all"
+      return chatRooms;
+  }
+};
+```
+
+## 🛡️ **Data Validation & Security**
+
+### **Input Sanitization**
+
+```typescript
+// Always validate and sanitize user inputs
+const sanitizedUserInfo = {
+  name: userInfo.name.trim(),
+  email: userInfo.email.toLowerCase().trim(),
+  phone: userInfo.phone?.replace(/\D/g, ""), // Remove non-digits
+  countryCode: userInfo.countryCode,
+};
+```
+
+### **Error Handling**
+
+```typescript
+// Comprehensive error handling for database operations
+try {
+  const result = await client.someOperation();
+  return { success: true, data: result };
+} catch (error) {
+  console.error("Database operation failed:", error);
+
+  // Return user-friendly error messages
+  if (error.code === "P2002") {
+    return { success: false, error: "Duplicate entry found" };
+  }
+
+  return { success: false, error: "Operation failed" };
+}
+```
+
+## 📊 **Performance Optimization**
+
+### **Indexed Queries**
+
+```prisma
+// Add indexes for frequently queried fields
+model Customer {
+  // ... existing fields
+
+  @@index([domainId, ipAddress, createdAt])
+  @@index([email])
+}
+
+model ChatMessage {
+  // ... existing fields
+
+  @@index([chatRoomId, createdAt])
+  @@index([seen, role])
+}
+```
+
+### **Efficient Pagination**
+
+```typescript
+// Use cursor-based pagination for large datasets
+const getMessagesWithPagination = async (
+  chatRoomId: string,
+  cursor?: string,
+  limit: number = 50
+) => {
+  return await client.chatMessage.findMany({
+    where: { chatRoomId },
+    take: limit,
+    skip: cursor ? 1 : 0,
+    cursor: cursor ? { id: cursor } : undefined,
+    orderBy: { createdAt: "desc" },
+  });
+};
+```
+
+## 🔄 **Migration Patterns**
+
+### **Schema Updates**
+
+```bash
+# Always use Prisma migrations for schema changes
+npx prisma migrate dev --name add_customer_ip_tracking
+npx prisma generate
+```
+
+### **Data Migration Scripts**
+
+```typescript
+// scripts/update-existing-customers.ts
+// Update existing customers with IP addresses for testing
+const updateExistingCustomers = async () => {
+  const customers = await client.customer.findMany({
+    where: { ipAddress: null },
+  });
+
+  for (const customer of customers) {
+    await client.customer.update({
+      where: { id: customer.id },
+      data: { ipAddress: "127.0.0.1" }, // Test IP
+    });
+  }
+};
+```
